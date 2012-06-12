@@ -1,5 +1,6 @@
 reverse_index_datafiles/*
 reverse_index.tar.gz
 rindex
+tags
 cache
 *.swp

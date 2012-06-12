@@ -4,15 +4,30 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
-/*#include "globals.h"*/
+#include <pthread.h>
 #include "timer.h"
-/*#include "thread.h"*/
+#include <iostream>
+#include <queue>
+#include <ftw.h>
+#include <fnmatch.h>
+using namespace std;
 
-// Debug prints to be used inside parallel sections
+// Global parameters
+int nthreads;
+char* data_dir;
+int debug;
+
+
+// Debug prints to be used inside parallel section
+// You may want to redirect stdout when enebled
 #define DEBUG(...) do { \
     if (debug) \
         printf(__VA_ARGS__); \
 } while (0)
+
+
+// Global queue that holds paths to data files.
+queue<const char*> dataFiles;
 
 
 // Prints usage information
@@ -28,19 +43,35 @@ usage (const char* argv0)
     exit(-1);
 }
 
+// Populate a queue with the relative file paths to data files
+static int
+populateQueue (const char *fpath, const struct stat *sb, int typeflag)
+{
+    // if it's a file
+    if (typeflag == FTW_F) {
+        DEBUG("found file: %s\n", fpath);
+        dataFiles.push(fpath);
+    }
+
+    // tell ftw to continue
+    return 0;
+}
+
+// While queue of files not empty: Parse files (map) into a
+//      thread local dictionary while doing local reduction.
+// If queue becomes empty: Add from thread local dictionary to
+//      global dictionary.
+void
+mapReduce ()
+{
+
+}
+
 int
 main (int argc, char** argv)
 {
 
-    // Total Running time
-    double totalTime = 0.0;
-
     printf("\nRunning Reverse Indexing...\n");
-
-    // Global arguments
-    int nthreads;
-    char* data_dir;
-    int debug;
 
     if (argc == 1) // at least one argument (data directory)
         usage((char*)argv[0]);
@@ -78,43 +109,38 @@ main (int argc, char** argv)
     printf("\nDebug flag:        %d", debug);
 
 
-    // Create thread pool
-    /*thread_startup(nthreads); // Creates pull of threads*/
+    // Populates queue of files to be parsed
+    if (ftw(data_dir, populateQueue, 16) != 0) {
+        fprintf(stderr, "Error: something went wrong reading the files");
+    } else {
+        printf("\n\nFound %lu files to parse", dataFiles.size());
+    }
 
 
-    // Timer to count different execution phases
+
+    // Create thread id's pool
+    pthread_t global_threads[nthreads];
+
+    // Timer to count parallel region
     TIMER_T start;
     TIMER_T stop;
     TIMER_READ(start);
 
-    /*thread_start(parseFiles, data_dir); // Start threads*/
+    long i;
+    for (i = 0; i < nthreads; i++) {
+        pthread_create(&global_threads[i], NULL, mapReduce, (void*) NULL);
+    }
+    // WAIT
+    for (i = 0; i < nthreads; i++) {
+        pthread_join(global_threads[i], (void**)NULL);
+    }
 
     TIMER_READ(stop);
 
-    // Calculate the time that took the parsing
-    double parsingTime = TIMER_DIFF_SECONDS(start, stop);
-    totalTime += parsingTime;
-    printf("\n\nTime taken for parsing files is %9.6f sec.\n", parsingTime);
 
-
-    // Reduction
-    TIMER_READ(start);
-
-    /*thread_start(reduce, NULL); // will need to pass the data structure from parseFiles*/
-
-    TIMER_READ(stop);
-
-    // Calculate the time that took the parsing
-    double reduceTime = TIMER_DIFF_SECONDS(start, stop);
-    totalTime += reduceTime;
-    printf("\n\nTime taken for the reduction is %9.6f sec.\n", reduceTime);
-
-
-    printf("\n\nTOTAL Time for both operations is %9.6f sec.\n", totalTime);
-
-
-    // Clean up
-    /*thread_shutdown();*/
+    // Calculate the time that took the parallel section
+    double parallelTime = TIMER_DIFF_SECONDS(start, stop);
+    printf("\n\nTime taken for do reverse indexing is %9.6f sec.\n", parallelTime);
 
     return 0;
 }
