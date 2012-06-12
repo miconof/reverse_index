@@ -17,9 +17,9 @@
 
 // Prints usage information
 void
-usage (char* argv0)
+usage (const char* argv0)
 {
-    char* help =
+    const char* help =
         "Usage: %s [switches] -i data_dir\n"
         "       -i data_dir:    data directory that contains files to be parsed\n"
         "       -t nthreads:    number of threads\n"
