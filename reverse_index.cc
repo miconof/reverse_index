@@ -36,13 +36,22 @@ int debug;
         printf(__VA_ARGS__); \
 } while (0)
 
+// define struct synch_set
+struct synch_set {
+    pthread_mutex_t set_mutex = PTHREAD_MUTEX_INITIALIZER;
+    set<string> files;
+
+    synch_set (set<string> A) : files(A) {}
+};
 
 // Global queue that holds paths to data files.
 queue<string> data_files;
-
+// Global map
+unordered_map<string, synch_set> global_map;
 
 // Defining mutexes
 pthread_mutex_t df_mutex;
+pthread_mutex_t ht_mutex;
 
 // Prints usage information
 void
@@ -116,7 +125,7 @@ getLinks(const char* data)
 
         data += matches[0].rm_eo; // move to the end of the last match
     }
-regfree(&regex);
+    regfree(&regex);
     return links;
 }
 
@@ -131,7 +140,7 @@ mapReduce (void*)
     int i, fd;
     vector<string> links;
     unordered_map<string, set<string> > local_map;
-    unordered_map<string, set<string> >::iterator it;
+    unordered_map<string, set<string> >::iterator it_local;
 
     // map phase with thread-local reduction
     while (true) {
@@ -163,9 +172,9 @@ mapReduce (void*)
             string tmp = links[i];
             //printf("\nT%d after links of i in loop\n", pthread_self());
 
-            it = local_map.find(links[i]);
-            //if (it != local_map.end()) {
-                //it->second.insert(file_path);
+            it_local = local_map.find(links[i]);
+            //if (it_local != local_map.end()) {
+                //it_local->second.insert(file_path);
             //} else{
                 //set<string> file_set;
                 //file_set.insert(file_path);
@@ -178,7 +187,24 @@ mapReduce (void*)
     DEBUG("\nNumer of links: %d\n", (int)local_map.size());
 
     // reduce
-
+    // from local map to global map
+    //unordered_map<string, synch_set>::iterator it_global;
+    //for each entry in local map
+    //for (it_local = local_map.begin(); it_local != local_map.end(); i++) {
+        //if entry also present in global map, grab bucket lock and insert local map set
+        //it_global = global_map.find(it_local->first);
+        //if (it_global != global_map.end()){
+            //pthread_mutex_lock (&(it_global->second.set_mutex));
+            //it_global->second.files.insert(local_map.begin(), local_map.end());
+            //pthread_mutex_unlock (&(it_global->second.set_mutex));
+        //} else {
+            //if not present in global map, need to create a new entry, grab global lock to do so
+            //synch_set ss(it_local->second);
+            //pthread_mutex_lock (&ht_mutex);
+            //global_map.insert(pair<string, synch_set>(it_local->first, ss));
+            //pthread_mutex_unlock (&ht_mutex);
+        //}
+    //}
 
     pthread_exit((void*)0);
 }
@@ -233,6 +259,7 @@ main (int argc, char** argv)
     // Create thread id's pool and initialize mutexes
     pthread_t global_threads[nthreads];
     pthread_mutex_init(&df_mutex, NULL);
+    pthread_mutex_init(&ht_mutex, NULL);
 
     // Timer to count parallel region
     TIMER_T start;
@@ -249,6 +276,7 @@ main (int argc, char** argv)
 
     // Destroy mutexes
     pthread_mutex_destroy(&df_mutex);
+    pthread_mutex_destroy(&ht_mutex);
 
     // Calculate the time that took the parallel section
     double parallelTime = TIMER_DIFF_SECONDS(start, stop);
