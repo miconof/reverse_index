@@ -1,7 +1,7 @@
 EXECUTABLES = reverse_index
 CC = g++
 LD = g++
-CFLAGS = -Wall -pthread
+CFLAGS = -Wall -pthread -std=c++0x -O3
 
 all: reverse_index
 
