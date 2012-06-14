@@ -3,10 +3,13 @@ CC = g++
 LD = g++
 CFLAGS = -Wall -pthread -std=c++0x -O3
 
-all: reverse_index
+all: rindex profile
 
-reverse_index: reverse_index.cc Makefile
+rindex: reverse_index.cc Makefile
 	$(CC) $(CFLAGS) -o rindex reverse_index.cc
+
+profile: reverse_index.cc Makefile
+	$(CC) $(CFLAGS) -pg -o rindex.prof reverse_index.cc
 
 .PHONY: clean
 clean:

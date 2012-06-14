@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include "timer.h"
 #include <iostream>
+#include <fstream>
 #include <queue>
 #include <ftw.h>
 #include <fnmatch.h>
@@ -20,14 +21,14 @@
 #include <sys/types.h>
 #include <regex.h>
 #include <errno.h>
+#include <sstream>
 using namespace std;
-
 
 // Global parameters
 int nthreads;
 char* data_dir;
 int debug;
-
+int silent;
 
 // Debug prints to be used inside parallel section
 // You may want to redirect stdout when enebled
@@ -35,18 +36,23 @@ int debug;
     if (debug) \
         printf(__VA_ARGS__); \
 } while (0)
+#define PRINTF(...) do { \
+    if (!silent) \
+        printf(__VA_ARGS__); \
+} while (0)
 
-// define struct synch_set
 struct synch_set {
-    pthread_mutex_t set_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t set_mutex;
     set<string> files;
 
-    synch_set (set<string> A) : files(A) {}
+    synch_set (set<string> A) : files(A) {
+        set_mutex = PTHREAD_MUTEX_INITIALIZER;
+    }
 };
 
 // Global queue that holds paths to data files.
 queue<string> data_files;
-// Global map
+// Global map where the final reduction is done.
 unordered_map<string, synch_set> global_map;
 
 // Defining mutexes
@@ -61,11 +67,11 @@ usage (const char* argv0)
         "Usage: %s [switches] -i data_dir\n"
         "       -i data_dir:    data directory that contains files to be parsed\n"
         "       -t nthreads:    number of threads\n"
-        "       -d:             enables debug facilities, slow performance\n";
+        "       -d:             enables debug facilities, slow performance\n"
+        "       -s:             silent output, for measuring time\n";
     fprintf(stderr, help, argv0);
     exit(-1);
 }
-
 
 // Populate a queue with the relative file paths to data files
 static int
@@ -75,11 +81,8 @@ populateQueue (const char *fpath, const struct stat *sb, int typeflag)
     if (typeflag == FTW_F) {
         data_files.push(string(fpath));
     }
-
-    // tell ftw to continue
     return 0;
 }
-
 
 string
 getDataFilePath ()
@@ -116,12 +119,12 @@ getLinks(const char* data)
 
         assert(matches[0].rm_so != -1);
 
-        const char * start = matches[0].rm_so + data;
+        const char* start = matches[0].rm_so + data;
         size_t len = matches[0].rm_eo - matches[0].rm_so;
 
         string s = string(start, len);
         links.push_back(s);
-        //DEBUG("\nAdding to string vector: %s, of length %lu\n", s.c_str(), len);
+        DEBUG("\nAdding to string vector: %s, of length %lu", s.c_str(), len);
 
         data += matches[0].rm_eo; // move to the end of the last match
     }
@@ -136,75 +139,89 @@ getLinks(const char* data)
 void*
 mapReduce (void*)
 {
-    string file_path;
-    int i, fd;
+    string file_path, data;
+    int i, num_files;
     vector<string> links;
     unordered_map<string, set<string> > local_map;
     unordered_map<string, set<string> >::iterator it_local;
+    stringstream buffer;
+    unordered_map<string, synch_set>::iterator it_global;
+
+    num_files = 0;
 
     // map phase with thread-local reduction
     while (true) {
-        // Grab a file path from the shared global queue for parsing
+        // Grab a file path from the shared queue for parsing
         pthread_mutex_lock (&df_mutex);
         file_path = getDataFilePath();
         pthread_mutex_unlock (&df_mutex);
 
         // Check for end of queue
         if (file_path.empty()) break;
-        DEBUG("\nT%d grabs file: %s\n", (int)pthread_self(), file_path.c_str());
+        else num_files++;
+        DEBUG("\nT%d reads file: %s", (int)pthread_self(), file_path.c_str());
 
-        // Load file into memory -- faster
-        fd = open(file_path.c_str(), O_RDONLY);
-        struct stat sb;
-        fstat (fd, &sb);
-        if (sb.st_size == 0) continue; // There are files with size 0, mmap crashes
-        void* data = mmap (NULL, sb.st_size+4096, PROT_READ, MAP_PRIVATE, fd, 0);
-        if (data == MAP_FAILED) printf("\nMMAP ERROR: %s\n", sys_errlist[errno]);
-        close(fd);
+        // Load file into a string with ifstream 
+        // As fast as mmap for small files
+        ifstream ifs(file_path.c_str());
+        buffer << ifs.rdbuf();
+        data = buffer.str();
+        buffer.str(string());
+        buffer.clear();
 
         // Create vector of links in the file
-        links = getLinks((const char*)data);
+        links = getLinks(data.c_str());
 
-        // Add the links to the local map (local reduction)
-        //printf("\nT%d before crashing loop, links size: %d\n", pthread_self(), (int)links.size());
+        // Add links to the thread local map (local reduction)
         for (i=0; i < (int)links.size(); i++) {
-            //printf("\nT%d inside crashing loop\n", pthread_self());
-            string tmp = links[i];
-            //printf("\nT%d after links of i in loop\n", pthread_self());
-
             it_local = local_map.find(links[i]);
-            //if (it_local != local_map.end()) {
-                //it_local->second.insert(file_path);
-            //} else{
-                //set<string> file_set;
-                //file_set.insert(file_path);
-                //local_map.insert(pair<string, set<string> >(links[i],file_set));
-            //}
+            if (it_local != local_map.end()) {
+                it_local->second.insert(file_path);
+            } else{
+                set<string> file_set;
+                file_set.insert(file_path);
+                local_map.insert(pair<string, set<string> >(links[i],file_set));
+            }
         }
-        munmap(data, sb.st_size+1);
     }
 
-    DEBUG("\nNumer of links: %d\n", (int)local_map.size());
+    PRINTF("\nThread%d parsed %d files and found %d distinct links", (int)pthread_self(), num_files, (int)local_map.size());
 
-    // reduce
-    // from local map to global map
-    //unordered_map<string, synch_set>::iterator it_global;
-    //for each entry in local map
-    //for (it_local = local_map.begin(); it_local != local_map.end(); i++) {
-        //if entry also present in global map, grab bucket lock and insert local map set
-        //it_global = global_map.find(it_local->first);
-        //if (it_global != global_map.end()){
-            //pthread_mutex_lock (&(it_global->second.set_mutex));
-            //it_global->second.files.insert(local_map.begin(), local_map.end());
-            //pthread_mutex_unlock (&(it_global->second.set_mutex));
-        //} else {
-            //if not present in global map, need to create a new entry, grab global lock to do so
-            //synch_set ss(it_local->second);
-            //pthread_mutex_lock (&ht_mutex);
-            //global_map.insert(pair<string, synch_set>(it_local->first, ss));
-            //pthread_mutex_unlock (&ht_mutex);
-        //}
-    //}
+    // reduce: from local map to global map
+    for (it_local = local_map.begin(); it_local != local_map.end(); it_local++) {
+
+        // For each entry in local_map, agregate it to global_map
+        it_global = global_map.find(it_local->first);
+        if (it_global != global_map.end()){
+
+            // If entry already in global_map, grab bucket lock and update it
+            pthread_mutex_lock (&(it_global->second.set_mutex));
+            it_global->second.files.insert(it_local->second.begin(), it_local->second.end());
+            pthread_mutex_unlock (&(it_global->second.set_mutex));
+
+        } else {
+
+            // If not in global_map, insert new entry.
+            // Grab global lock and check again if present to avoid race.
+            pthread_mutex_lock (&ht_mutex);
+            it_global = global_map.find(it_local->first);
+            if (it_global != global_map.end()){
+
+                // Its present now, someone was faster...
+                pthread_mutex_lock (&(it_global->second.set_mutex));
+                it_global->second.files.insert(it_local->second.begin(), it_local->second.end());
+                pthread_mutex_unlock (&(it_global->second.set_mutex));
+
+            } else {
+
+                // Still not in global_map, insert.
+                synch_set ss(it_local->second);
+                global_map.insert(pair<string, synch_set>(it_local->first, ss));
+
+            }
+            pthread_mutex_unlock (&ht_mutex);
+        }
+    }
 
     pthread_exit((void*)0);
 }
@@ -213,19 +230,22 @@ int
 main (int argc, char** argv)
 {
 
-    printf("\nRunning Reverse Indexing...\n");
+    // At least one argument (data directory)
+    if (argc == 1) usage((char*)argv[0]);
 
-    if (argc == 1) // at least one argument (data directory)
-        usage((char*)argv[0]);
-
+    // Default parameters
     nthreads = 1;
     debug = 0;
+    silent = 0;
+
     int opt;
-    while ((opt = getopt(argc,(char**)argv,"i:t:d")) != EOF) {
+    while ((opt = getopt(argc,(char**)argv,"i:t:sd")) != EOF) {
         switch (opt) {
             case 'i': data_dir = optarg;
                       break;
             case 't': nthreads = atoi(optarg);
+                      break;
+            case 's': silent = 1;
                       break;
             case 'd': debug = 1;
                       break;
@@ -245,15 +265,16 @@ main (int argc, char** argv)
         fprintf(stderr, "Error: no such directory (%s)\n", data_dir);
         exit(1);
     }
-    printf("\nData directory:    %s", data_dir);
-    printf("\nNumber of threads: %d", nthreads);
-    printf("\nDebug flag:        %d", debug);
+    PRINTF("\nRunning Reverse Indexing...\n");
+    PRINTF("\nData directory:    %s", data_dir);
+    PRINTF("\nNumber of threads: %d", nthreads);
+    PRINTF("\nDebug flag:        %d", debug);
 
     // Populates queue of files to be parsed
     if (ftw(data_dir, populateQueue, 16) != 0) {
         fprintf(stderr, "Error: something went wrong reading the files\n");
     } else {
-        printf("\n\nFound %lu files to parse", data_files.size());
+        PRINTF("\n\nFound %lu files to parse\n", data_files.size());
     }
 
     // Create thread id's pool and initialize mutexes
@@ -278,9 +299,12 @@ main (int argc, char** argv)
     pthread_mutex_destroy(&df_mutex);
     pthread_mutex_destroy(&ht_mutex);
 
+    // Global map size
+    PRINTF("\n\nTotal number of distinct links found after reverse indexing: %lu", global_map.size());
+
     // Calculate the time that took the parallel section
     double parallelTime = TIMER_DIFF_SECONDS(start, stop);
-    printf("\n\nTime taken for do reverse indexing is %9.6f sec.\n", parallelTime);
+    PRINTF("\n\nTime taken for do reverse indexing is %9.6f sec.\n", parallelTime);
 
     return 0;
 }
