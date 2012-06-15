@@ -68,7 +68,8 @@ usage (const char* argv0)
         "       -i data_dir:    data directory that contains files to be parsed\n"
         "       -t nthreads:    number of threads\n"
         "       -d:             enables debug facilities, slow performance\n"
-        "       -s:             silent output, for measuring time\n";
+        "       -s:             silent output, for measuring time\n"
+        "Reverse index output with LINK->list(FILE) in output.txt\n";
     fprintf(stderr, help, argv0);
     exit(-1);
 }
@@ -226,6 +227,26 @@ mapReduce (void*)
     pthread_exit((void*)0);
 }
 
+void
+printResult()
+{
+    FILE * pFile;
+    unordered_map<string, synch_set>::iterator it;
+    set<string>::iterator iset;
+
+    pFile = fopen ("output.txt","w");
+
+    for (it = global_map.begin(); it != global_map.end(); it++) {
+        fprintf(pFile,"LINK: %s\n", (it->first).c_str());
+        for (iset = it->second.files.begin(); iset != it->second.files.end(); iset++) {
+            fprintf(pFile,"\tFILE: %s\n", (*iset).c_str());
+        }
+    }
+
+    fclose (pFile);
+    return;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -303,6 +324,9 @@ main (int argc, char** argv)
     // Calculate the time that took the parallel section
     double parallelTime = TIMER_DIFF_SECONDS(start, stop);
     PRINTF("\n\nTime taken for do reverse indexing is %9.6f sec.\n", parallelTime);
+
+    PRINTF("\n\nReverse index dump in file output.txt\n");
+    if (!silent) printResult();
 
     return 0;
 }
