@@ -159,7 +159,7 @@ mapReduce (void*)
         // Check for end of queue
         if (file_path.empty()) break;
         else num_files++;
-        DEBUG("\nT%d reads file: %s", (int)pthread_self(), file_path.c_str());
+        DEBUG("\nT%u reads file: %s", (unsigned int)pthread_self(), file_path.c_str());
 
         // Load file into a string with ifstream
         // As fast as mmap for small files
@@ -185,7 +185,7 @@ mapReduce (void*)
         }
     }
 
-    PRINTF("\nThread%d parsed %d files and found %d distinct links", (int)pthread_self(), num_files, (int)local_map.size());
+    PRINTF("\nThread%u parsed %d files and found %d distinct links", (unsigned int)pthread_self(), num_files, (int)local_map.size());
 
     // reduce: from local map to global map
     for (it_local = local_map.begin(); it_local != local_map.end(); it_local++) {
