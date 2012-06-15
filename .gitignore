@@ -1,6 +1,9 @@
 reverse_index_datafiles/*
 reverse_index.tar.gz
 rindex
+rindex.prof
+rindex.debug
+results.csv
 tags
 cache
 *.swp
