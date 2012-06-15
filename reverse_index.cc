@@ -141,10 +141,10 @@ mapReduce (void*)
 {
     string file_path, data;
     int i, num_files;
+    stringstream buffer;
     vector<string> links;
     unordered_map<string, set<string> > local_map;
     unordered_map<string, set<string> >::iterator it_local;
-    stringstream buffer;
     unordered_map<string, synch_set>::iterator it_global;
 
     num_files = 0;
@@ -161,7 +161,7 @@ mapReduce (void*)
         else num_files++;
         DEBUG("\nT%d reads file: %s", (int)pthread_self(), file_path.c_str());
 
-        // Load file into a string with ifstream 
+        // Load file into a string with ifstream
         // As fast as mmap for small files
         ifstream ifs(file_path.c_str());
         buffer << ifs.rdbuf();
@@ -169,7 +169,7 @@ mapReduce (void*)
         buffer.str(string());
         buffer.clear();
 
-        // Create vector of links in the file
+        // Create vector of links found in the file
         links = getLinks(data.c_str());
 
         // Add links to the thread local map (local reduction)
@@ -257,14 +257,12 @@ main (int argc, char** argv)
     }
 
     // Sanity checks
-    if (data_dir == 0) {
-        usage((char*)argv[0]);
-    }
     int infile;
     if ((infile = open(data_dir, O_RDONLY, "0600")) == -1) {
         fprintf(stderr, "Error: no such directory (%s)\n", data_dir);
         exit(1);
     }
+
     PRINTF("\nRunning Reverse Indexing...\n");
     PRINTF("\nData directory:    %s", data_dir);
     PRINTF("\nNumber of threads: %d", nthreads);
