@@ -3,7 +3,8 @@ reverse_index.tar.gz
 rindex
 rindex.prof
 rindex.debug
-results.csv
+*.csv
+*.txt
 tags
 cache
 *.swp
