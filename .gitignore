@@ -5,6 +5,7 @@ rindex.prof
 rindex.debug
 *.csv
 *.txt
+rindex.pdf
 tags
 cache
 *.swp
